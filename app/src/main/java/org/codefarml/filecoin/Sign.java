@@ -13,6 +13,9 @@ import co.nstant.in.cbor.CborBuilder;
 import co.nstant.in.cbor.CborEncoder;
 import co.nstant.in.cbor.CborException;
 import co.nstant.in.cbor.model.UnsignedInteger;
+import io.ipfs.cid.Cid;
+import io.ipfs.multibase.Multibase;
+import io.ipfs.multihash.Multihash;
 import ove.crypto.digest.Blake2b;
 
 /**
@@ -35,11 +38,11 @@ class Sign {
         UnsignedMessageAPI unsignedMessageAPI = new UnsignedMessageAPI();
         unsignedMessageAPI.setFrom("f1re27enhjrpp7jnr33iioq6am6w6xodu63aodlha");
         unsignedMessageAPI.setTo("f1str7eiaxglndkh5rm7qe4cprlwguwmkoj4xyu5i");
-        unsignedMessageAPI.setNonce(30);
-        unsignedMessageAPI.setValue("100000000000");
-        unsignedMessageAPI.setGasFeeCap("101183");
-        unsignedMessageAPI.setGasPremium("100129");
-        unsignedMessageAPI.setGas_limit(1000000);
+        unsignedMessageAPI.setNonce(52);
+        unsignedMessageAPI.setValue("10000000000000");
+        unsignedMessageAPI.setGasFeeCap("2589446624");
+        unsignedMessageAPI.setGasPremium("99562");
+        unsignedMessageAPI.setGas_limit(608335);
         unsignedMessageAPI.setMethod(0);
         unsignedMessageAPI.setParams("");
         return unsignedMessageAPI;
@@ -106,7 +109,7 @@ class Sign {
                     .end()
                     .build());
             byte[] encodedBytes = baos.toByteArray();
-            byte[] cidHashBytes = getCidHash(encodedBytes);
+            byte[] cidHashBytes = getMessageCidHash(encodedBytes);
             sign(cidHashBytes);
         } catch (CborException e) {
             e.printStackTrace();
@@ -196,7 +199,7 @@ class Sign {
      * @param message 交易结构体的序列化字节
      *                通过交易结构体字节获取CidHash
      */
-    public static byte[] getCidHash(byte[] message) {
+    public static byte[] getMessageCidHash(byte[] message) {
         Blake2b.Param param = new Blake2b.Param();
         param.setDigestLength(32);
 
@@ -216,15 +219,86 @@ class Sign {
         Log.d(TAG, prefixByteHex);
 
         return prefixByte;
+    }
+
+    /**
+     * 获取签名信息的cid
+     *
+     */
+    public static void getCid(UnsignedMessageAPI unsignedMessageAPI,String _prikey){
+        priKey = _prikey;
+        UnsignedMessage unsignedMessage = try_from(unsignedMessageAPI);
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        try {
+            new CborEncoder(baos).encode(new CborBuilder()
+                    .addArray()
+                    .add(unsignedMessage.getVersion())
+                    // add string
+                    .add(unsignedMessage.getTo())
+                    .add(unsignedMessage.getFrom())
+                    .add(unsignedMessage.getSequence())
+                    .add(unsignedMessage.getValue())
+                    .add(unsignedMessage.getGas_limit())
+                    .add(unsignedMessage.getGasFeeCap())
+                    .add(unsignedMessage.getGasPremium())
+                    .add(unsignedMessage.getMethod_num())
+                    // add integer
+                    .add(new co.nstant.in.cbor.model.ByteString(new byte[]{}))
+                    .end()
+                    .build());
+
+            //消息体的cbor字节流
+            byte[] messageCborBytes = baos.toByteArray();
+
+            //签名的cbor字节流
+            byte[] sign = sign(getMessageCidHash(messageCborBytes));
 
 
+            byte[] signBytes = new byte[66];
+
+            //第一个是签名的type
+            signBytes[0] = 1;
+            //签名
+            System.arraycopy(sign, 0, signBytes, 1, sign.length);
+
+            ByteArrayOutputStream signBaos = new ByteArrayOutputStream();
+            new CborEncoder(signBaos).encode(new CborBuilder()
+                            .add(signBytes).build());
+
+            byte[] signCborBytes = signBaos.toByteArray();
+
+            byte[] cidBytes = new byte[1 + messageCborBytes.length + signCborBytes.length];
+
+            //拼接字节流
+            cidBytes[0] = (byte) 130;
+            System.arraycopy(messageCborBytes, 0, cidBytes, 1, messageCborBytes.length);
+            System.arraycopy(signCborBytes, 0, cidBytes, 1 + messageCborBytes.length, signCborBytes.length);
+
+
+            Blake2b.Param param = new Blake2b.Param();
+            param.setDigestLength(32);
+
+            //消息体字节
+            byte[] hash = Blake2b.Digest.newInstance(param).digest(cidBytes);
+
+            Log.e(TAG,"Cid MultiHash:" + NumericUtil.bytesToHex(hash));
+
+            Cid cid = new Cid(1, Cid.Codec.DagCbor, Multihash.Type.blake2b_256,hash);
+
+            String cidStr = Multibase.encode(Multibase.Base.Base32, cid.toBytes());
+
+            Log.e(TAG,"Cid :" + cidStr);
+
+        } catch (CborException e) {
+            e.printStackTrace();
+        }
     }
 
     /**
      * @param cidHash 摘要
      *                对摘要进行椭圆签名椭圆签名
      */
-    public static void sign(byte[] cidHash) {
+    public static byte[] sign(byte[] cidHash) {
         ECKeyPair ecKeyPair = ECKeyPair.create(Numeric.toBigInt(priKey));
         org.web3j.crypto.Sign.SignatureData signatureData = org.web3j.crypto.Sign.signMessage(cidHash,
                 ecKeyPair, false);
@@ -233,6 +307,7 @@ class Sign {
         Log.d(TAG, stringHex);
         String base64 = Base64.encodeToString(sig, Base64.DEFAULT);
         Log.d(TAG, "签名字符串：" + base64);
+        return sig;
 
     }
 
